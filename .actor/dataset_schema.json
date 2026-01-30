@@ -1,0 +1,53 @@
+{
+  "actorSpecification": 1,
+  "fields": {},
+  "views": {
+    "overview": {
+      "title": "Overview",
+      "transformation": {
+        "fields": [
+          "name",
+          "description",
+          "upvotes",
+          "categories",
+          "url",
+          "image_url",
+          "scraped_at"
+        ]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "name": {
+            "label": "Product Name",
+            "format": "text"
+          },
+          "description": {
+            "label": "Description",
+            "format": "text"
+          },
+          "upvotes": {
+            "label": "Upvotes",
+            "format": "text"
+          },
+          "categories": {
+            "label": "Categories",
+            "format": "text"
+          },
+          "url": {
+            "label": "Product URL",
+            "format": "link"
+          },
+          "image_url": {
+            "label": "Image",
+            "format": "text"
+          },
+          "scraped_at": {
+            "label": "Scraped At",
+            "format": "text"
+          }
+        }
+      }
+    }
+  }
+}
