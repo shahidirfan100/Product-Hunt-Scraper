@@ -1,5 +1,6 @@
 import { Actor, log } from 'apify';
 import { CheerioCrawler, Dataset } from 'crawlee';
+import * as cheerio from 'cheerio';
 
 await Actor.init();
 
@@ -8,6 +9,7 @@ await Actor.init();
  */
 function extractProducts(html, crawlerLog) {
     const productMap = new Map();
+    const $ = cheerio.load(html);
     
     // Extract from ProductEdge->node->Product pattern (contains complete data with images)
     const productEdgeRegex = /\{"__typename":"ProductEdge","node":\{"__typename":"Product","id":"([^"]+)"[\s\S]*?"slug":"([^"]+)","name":"([^"]+)","tagline":"([^"]+)","logoUuid":"([^"]+)"/g;
@@ -24,6 +26,11 @@ function extractProducts(html, crawlerLog) {
                 description: tagline,
                 url: `https://www.producthunt.com/products/${slug}`,
                 image_url: `https://ph-files.imgix.net/${logoUuid}?auto=format&fit=crop`,
+                rating: null,
+                reviews: null,
+                category: [],
+                used_by: [],
+                os: [],
                 scraped_at: new Date().toISOString()
             });
         }
@@ -55,12 +62,96 @@ function extractProducts(html, crawlerLog) {
                         description: taglineMatch[1],
                         url: `https://www.producthunt.com/products/${slugMatch[1]}`,
                         image_url: imageUrl,
+                        rating: null,
+                        reviews: null,
+                        category: [],
+                        used_by: [],
+                        os: [],
                         scraped_at: new Date().toISOString()
                     });
                 }
             }
         }
     }
+    
+    // Parse DOM for additional fields using Cheerio
+    $('ul li').each((index, element) => {
+        const $item = $(element);
+        
+        // Extract rating - look for numeric rating value only
+        let rating = null;
+        $item.find('span.font-semibold').each((i, span) => {
+            const text = $(span).text().trim();
+            // Check if it's a numeric rating (e.g., "5", "4.5", "4")
+            if (/^\d+(\.\d+)?$/.test(text)) {
+                rating = parseFloat(text);
+                return false; // break the loop
+            }
+        });
+        
+        // Extract review count
+        const reviewLink = $item.find('a.hover\\:underline').first();
+        const reviewText = reviewLink.text().trim();
+        const reviewMatch = reviewText.match(/(\d+)/);
+        const reviews = reviewMatch ? parseInt(reviewMatch[1]) : null;
+        
+        // Extract categories - only from anchor tags to avoid duplicates
+        const categories = [];
+        const categorySet = new Set();
+        $item.find('div.flex.max-h-6.flex-row.flex-wrap.items-center.gap-2.overflow-hidden.z-10.mt-1 a').each((i, cat) => {
+            const catText = $(cat).text().trim();
+            if (catText && !categorySet.has(catText)) {
+                categories.push(catText);
+                categorySet.add(catText);
+            }
+        });
+        
+        // Extract "Used by" information - filter out bullets and duplicates
+        const usedBy = [];
+        const usedBySet = new Set();
+        $item.find('div.flex.grow-0.flex-row.flex-wrap.items-center.gap-2.z-10.mt-1 img').each((i, img) => {
+            const altText = $(img).attr('alt');
+            if (altText && !usedBySet.has(altText) && altText !== '•' && !altText.startsWith('Used by')) {
+                usedBy.push(altText);
+                usedBySet.add(altText);
+            }
+        });
+        
+        // Extract OS/Platform buttons - deduplicate
+        const osList = [];
+        const osSet = new Set();
+        $item.find('div.mt-2.flex.flex-wrap.gap-1.z-10 button, button.mt-2').each((i, os) => {
+            const osText = $(os).text().trim();
+            if (osText && !osSet.has(osText)) {
+                osList.push(osText);
+                osSet.add(osText);
+            }
+        });
+        
+        // Try to match this item to a product by name or slug
+        const productName = $item.find('h3, [class*="font-bold"], strong').first().text().trim();
+        const productLink = $item.find('a[href*="/products/"]').first().attr('href');
+        
+        if (productLink) {
+            const slugMatch = productLink.match(/\/products\/([^/?]+)/);
+            if (slugMatch) {
+                const slug = slugMatch[1];
+                
+                // Find matching product in map
+                for (const [id, product] of productMap.entries()) {
+                    if (product.slug === slug || product.name === productName) {
+                        // Update product with DOM-parsed data
+                        if (rating !== null) product.rating = rating;
+                        if (reviews) product.reviews = reviews;
+                        if (categories.length > 0) product.category = categories;
+                        if (usedBy.length > 0) product.used_by = usedBy;
+                        if (osList.length > 0) product.os = osList;
+                        break;
+                    }
+                }
+            }
+        }
+    });
     
     const products = Array.from(productMap.values());
     crawlerLog.info(`Extracted ${products.length} unique products`);
