@@ -273,9 +273,12 @@ async function main() {
             `max_pages=${maxPages === 0 ? 'auto' : maxPages}`,
         );
 
-        const productsById = new Map();
+        const seenProductIds = new Set();
+        let pushedCount = 0;
         let pagesProcessed = 0;
         let stopReason = 'finished';
+        let isStopping = false;
+        let stateLock = Promise.resolve();
 
         const crawler = new CheerioCrawler({
             maxRequestRetries: 2,
@@ -325,42 +328,66 @@ async function main() {
                 const fallbackCategorySlug = topicSlugMatch ? topicSlugMatch[1] : null;
                 const products = extractProductsFromListingPayload(body, fallbackCategorySlug);
 
-                if (products.length === 0) {
-                    stopReason = 'no_products_on_page';
-                    await activeCrawler.autoscaledPool?.abort();
-                    return;
-                }
+                let releaseLock;
+                const previousLock = stateLock;
+                stateLock = new Promise((resolve) => {
+                    releaseLock = resolve;
+                });
+                await previousLock;
 
-                let newUniqueProducts = 0;
-                for (const product of products) {
-                    if (!productsById.has(product.id)) {
-                        productsById.set(product.id, product);
-                        newUniqueProducts++;
+                try {
+                    if (isStopping) return;
+
+                    if (products.length === 0) {
+                        stopReason = 'no_products_on_page';
+                        isStopping = true;
+                        await activeCrawler.autoscaledPool?.abort();
+                        return;
                     }
-                }
 
-                if (productsById.size >= resultsWanted) {
-                    stopReason = 'target_reached';
-                    await activeCrawler.autoscaledPool?.abort();
-                    return;
-                }
+                    const remainingSlots = Math.max(0, resultsWanted - pushedCount);
+                    const newProductsToPush = [];
 
-                if (newUniqueProducts === 0) {
-                    stopReason = 'no_new_products';
-                    await activeCrawler.autoscaledPool?.abort();
-                    return;
-                }
+                    for (const product of products) {
+                        if (seenProductIds.has(product.id)) continue;
+                        if (newProductsToPush.length >= remainingSlots) break;
+                        seenProductIds.add(product.id);
+                        newProductsToPush.push(product);
+                    }
 
-                const currentPage = Number(request.userData.page || 1);
-                if (maxPages > 0 && currentPage >= maxPages) {
-                    stopReason = 'max_pages_reached';
-                    await activeCrawler.autoscaledPool?.abort();
-                    return;
-                }
+                    if (newProductsToPush.length > 0) {
+                        await Actor.pushData(newProductsToPush);
+                        pushedCount += newProductsToPush.length;
+                    }
 
-                const nextPage = currentPage + 1;
-                const nextUrl = buildPageUrl(baseUrl, nextPage);
-                await activeCrawler.addRequests([{ url: nextUrl, userData: { page: nextPage } }]);
+                    if (pushedCount >= resultsWanted) {
+                        stopReason = 'target_reached';
+                        isStopping = true;
+                        await activeCrawler.autoscaledPool?.abort();
+                        return;
+                    }
+
+                    if (newProductsToPush.length === 0) {
+                        stopReason = 'no_new_products';
+                        isStopping = true;
+                        await activeCrawler.autoscaledPool?.abort();
+                        return;
+                    }
+
+                    const currentPage = Number(request.userData.page || 1);
+                    if (maxPages > 0 && currentPage >= maxPages) {
+                        stopReason = 'max_pages_reached';
+                        isStopping = true;
+                        await activeCrawler.autoscaledPool?.abort();
+                        return;
+                    }
+
+                    const nextPage = currentPage + 1;
+                    const nextUrl = buildPageUrl(baseUrl, nextPage);
+                    await activeCrawler.addRequests([{ url: nextUrl, userData: { page: nextPage } }]);
+                } finally {
+                    releaseLock();
+                }
             },
             failedRequestHandler({ request }, error) {
                 log.error(`Request failed: ${request.url} - ${error.message}`);
@@ -369,16 +396,7 @@ async function main() {
 
         await crawler.run([{ url: buildPageUrl(baseUrl, 1), userData: { page: 1 } }]);
 
-        const uniqueProducts = Array.from(productsById.values()).slice(0, resultsWanted);
-
-        if (uniqueProducts.length > 0) {
-            await Actor.pushData(uniqueProducts);
-            log.warning(
-                `Done | pushed=${uniqueProducts.length} | pages=${pagesProcessed} | stop_reason=${stopReason}`,
-            );
-        } else {
-            log.warning(`Done | pushed=0 | pages=${pagesProcessed} | stop_reason=${stopReason}`);
-        }
+        log.warning(`Done | pushed=${pushedCount} | pages=${pagesProcessed} | stop_reason=${stopReason}`);
 
         await Actor.exit();
     } catch (error) {
