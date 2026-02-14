@@ -6,10 +6,23 @@
       "title": "Overview",
       "transformation": {
         "fields": [
+          "id",
+          "slug",
           "name",
-          "description",
+          "tagline",
           "upvotes",
+          "rating",
+          "reviews",
+          "detailed_reviews_count",
+          "founder_reviews_count",
+          "founder_shoutouts",
+          "followers_count",
+          "posts_count",
+          "is_top_product",
+          "is_no_longer_online",
+          "launch_scheduled_at",
           "categories",
+          "tags",
           "url",
           "image_url",
           "scraped_at"
@@ -18,21 +31,73 @@
       "display": {
         "component": "table",
         "properties": {
+          "id": {
+            "label": "Product ID",
+            "format": "text"
+          },
+          "slug": {
+            "label": "Slug",
+            "format": "text"
+          },
           "name": {
             "label": "Product Name",
             "format": "text"
           },
-          "description": {
-            "label": "Description",
+          "tagline": {
+            "label": "Tagline",
             "format": "text"
           },
           "upvotes": {
             "label": "Upvotes",
-            "format": "text"
+            "format": "number"
+          },
+          "rating": {
+            "label": "Rating",
+            "format": "number"
+          },
+          "reviews": {
+            "label": "Reviews",
+            "format": "number"
+          },
+          "detailed_reviews_count": {
+            "label": "Detailed Reviews",
+            "format": "number"
+          },
+          "founder_reviews_count": {
+            "label": "Founder Reviews",
+            "format": "number"
+          },
+          "founder_shoutouts": {
+            "label": "Founder Shoutouts",
+            "format": "number"
+          },
+          "followers_count": {
+            "label": "Followers",
+            "format": "number"
+          },
+          "posts_count": {
+            "label": "Posts",
+            "format": "number"
+          },
+          "is_top_product": {
+            "label": "Top Product",
+            "format": "boolean"
+          },
+          "is_no_longer_online": {
+            "label": "Offline",
+            "format": "boolean"
+          },
+          "launch_scheduled_at": {
+            "label": "Launch Date",
+            "format": "date"
           },
           "categories": {
             "label": "Categories",
-            "format": "text"
+            "format": "array"
+          },
+          "tags": {
+            "label": "Tags",
+            "format": "array"
           },
           "url": {
             "label": "Product URL",
@@ -40,11 +105,11 @@
           },
           "image_url": {
             "label": "Image",
-            "format": "text"
+            "format": "link"
           },
           "scraped_at": {
             "label": "Scraped At",
-            "format": "text"
+            "format": "date"
           }
         }
       }

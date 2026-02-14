@@ -1,31 +1,32 @@
-# Product Hunt Scraper
+# Product Hunt Products Scraper
 
-Extract comprehensive product data from Product Hunt with ease. Collect product names, descriptions, images, and URLs from any category at scale. Perfect for market research, competitive analysis, and trend monitoring in the startup ecosystem.
+Extract complete Product Hunt product data across categories in a fast, reliable, automated workflow. Collect core product details, review metrics, category labels, tags, launch metadata, and profile links in structured output. Ideal for market intelligence, product research, monitoring, and analytics pipelines.
 
 ## Features
 
-- **Complete Product Data** — Extract names, descriptions, images, and URLs
-- **Category Flexibility** — Scrape any Product Hunt category with custom slugs
-- **Smart Pagination** — Automatically handles multiple pages with configurable limits
-- **Structured Output** — Clean, consistent dataset format for easy analysis
-- **Reliable Extraction** — Built-in error handling and retry mechanisms
+- **Rich Product Profiles** — Capture IDs, slugs, names, taglines, images, and product URLs
+- **Review And Popularity Metrics** — Collect ratings, review counts, detailed reviews, and follower signals
+- **Category And Tag Coverage** — Export category names, category slugs, and topic tags for segmentation
+- **Launch Metadata** — Include launch post ID and launch schedule timestamps
+- **Fast Multi-Page Collection** — Gather results from multiple category pages with configurable limits
+- **Clean Output Structure** — Get analysis-ready JSON records for BI tools, spreadsheets, and automations
 
 ## Use Cases
 
-### Market Research
-Discover trending products and analyze market demand across different categories. Identify which tools are gaining traction and understand user preferences in the startup ecosystem.
+### Market Intelligence
+Track which products gain traction in specific Product Hunt categories. Compare popularity, reviews, and engagement metrics to identify emerging opportunities.
 
-### Competitive Analysis
-Track competitor products and their market positioning. Monitor how similar products compare in terms of user engagement and category performance.
+### Competitor Monitoring
+Build competitor watchlists and monitor growth signals over time. Use ratings, followers, and launch activity to spot momentum changes quickly.
 
-### Lead Generation
-Identify innovative startups and promising products. Find contact opportunities and partnership potential in emerging product categories.
+### Startup Discovery
+Find promising startups by category and tag clusters. Prioritize products with strong social proof for outreach, partnerships, or investment research.
 
-### Trend Analysis
-Monitor product adoption and category trends over time. Track emerging patterns in product launches and user behavior across different sectors.
+### Content And Newsletter Research
+Source trending tools and launches for editorial calendars. Use categories and tags to curate focused lists for niche audiences.
 
-### Content Creation
-Find inspiration for articles about new products and startups. Research trending products to create informed content about the latest innovations.
+### Product Database Enrichment
+Populate internal product directories with consistent structured records. Sync output into Airtable, Sheets, warehouses, or internal dashboards.
 
 ---
 
@@ -33,63 +34,97 @@ Find inspiration for articles about new products and startups. Research trending
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `startUrl` | String | No | — | Custom Product Hunt category or search URL to scrape |
-| `category` | String | No | `"productivity"` | Product Hunt category slug (e.g., "ai", "saas", "developer-tools") |
-| `results_wanted` | Integer | No | `50` | Maximum number of products to collect |
-| `max_pages` | Integer | No | `10` | Safety cap on pages to scrape (15 products per page) |
+| `startUrl` | String | No | — | Custom Product Hunt topic/listing URL. If set, it overrides `category`. |
+| `category` | String | No | `"productivity"` | Product Hunt category slug used to build the start listing URL. |
+| `results_wanted` | Integer | No | `20` | Maximum number of products to return (1+). |
+| `max_pages` | Integer | No | `0` | Optional safety cap. Set `0` for automatic pagination until target/end. |
+| `proxyConfiguration` | Object | No | `{"useApifyProxy": false}` | Optional proxy configuration for reliability. |
 
 ---
 
 ## Output Data
 
-Each scraped product includes:
+Each dataset item contains:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | String | Unique Product Hunt ID |
-| `slug` | String | Product URL slug |
+| `id` | String | Unique Product Hunt product ID |
+| `slug` | String | Product slug |
 | `name` | String | Product name |
-| `description` | String | Product tagline/description |
-| `url` | String | Full Product Hunt product page URL |
-| `image_url` | String | Product logo/thumbnail image URL |
+| `description` | String | Product tagline/summary |
+| `tagline` | String | Product tagline |
+| `url` | String | Product Hunt product URL |
+| `image_url` | String | Product image URL |
+| `logo_uuid` | String | Product logo UUID |
+| `upvotes` | Number | Product popularity score |
+| `rating` | Number | Average review rating |
+| `reviews` | Number | Review count |
+| `reviews_count` | Number | Review count alias |
+| `detailed_reviews_count` | Number | Count of detailed reviews |
+| `founder_reviews_count` | Number | Founder review count |
+| `founder_shoutouts` | Number | Founder shoutout count |
+| `followers_count` | Number | Follower count |
+| `posts_count` | Number | Launch/post count |
+| `launch_post_id` | String | Latest launch post ID |
+| `launch_scheduled_at` | String | Latest launch scheduled timestamp |
+| `is_top_product` | Boolean | Whether listed as top product |
+| `is_subscribed` | Boolean | Viewer subscription state |
+| `is_no_longer_online` | Boolean | Whether product is flagged offline |
+| `categories` | Array | Category names |
+| `category` | Array | Category names alias |
+| `category_slugs` | Array | Category slugs |
+| `tags` | Array | Product tags |
+| `scraped_at` | String | ISO timestamp of extraction |
 
 ---
 
 ## Usage Examples
 
-### Custom URL Scraping
+### Basic Category Collection
 
-Scrape from a specific Product Hunt URL:
+Collect products from the default category with automatic pagination:
 
 ```json
 {
-  "startUrl": "https://www.producthunt.com/topics/design",
-  "results_wanted": 30,
-  "max_pages": 5
+  "category": "productivity",
+  "results_wanted": 20
 }
 ```
 
-### AI Tools Research
+### High-Volume Category Run
 
-Collect comprehensive data from the AI category:
+Collect a larger dataset for analytics or enrichment:
 
 ```json
 {
-  "category": "ai",
-  "results_wanted": 100,
-  "max_pages": 10
+  "category": "artificial-intelligence",
+  "results_wanted": 100
 }
 ```
 
-### Developer Tools Analysis
+### Custom Topic URL
 
-Scrape developer tools for market analysis:
+Run directly from a specific Product Hunt listing URL:
 
 ```json
 {
-  "category": "developer-tools",
-  "results_wanted": 50,
-  "max_pages": 5
+  "startUrl": "https://www.producthunt.com/topics/developer-tools",
+  "results_wanted": 50
+}
+```
+
+### Proxy Configuration
+
+Use proxy configuration for improved reliability:
+
+```json
+{
+  "category": "saas",
+  "results_wanted": 60,
+  "max_pages": 0,
+  "proxyConfiguration": {
+    "useApifyProxy": true
+  }
 }
 ```
 
@@ -99,12 +134,33 @@ Scrape developer tools for market analysis:
 
 ```json
 {
-  "id": "123456",
-  "slug": "notion",
-  "name": "Notion",
-  "description": "The all-in-one workspace for your notes, docs, and projects",
-  "url": "https://www.producthunt.com/posts/notion",
-  "image_url": "https://ph-files.imgix.net/ff3e2acf-884a-4f4c-a383-6edfe3de0d88.png"
+  "id": "109920",
+  "slug": "figma",
+  "name": "Figma",
+  "description": "The collaborative interface design tool",
+  "tagline": "The collaborative interface design tool",
+  "url": "https://www.producthunt.com/products/figma",
+  "image_url": "https://ph-files.imgix.net/db00a7a1-6778-4e51-a953-de5a9a339bc9.jpeg?auto=format&fit=crop",
+  "logo_uuid": "db00a7a1-6778-4e51-a953-de5a9a339bc9.jpeg",
+  "upvotes": 10010,
+  "rating": 4.92,
+  "reviews": 1364,
+  "reviews_count": 1364,
+  "detailed_reviews_count": 721,
+  "founder_reviews_count": 0,
+  "founder_shoutouts": 0,
+  "followers_count": 10010,
+  "posts_count": 18,
+  "launch_post_id": "1000100",
+  "launch_scheduled_at": "2025-09-20T00:01:00-07:00",
+  "is_top_product": true,
+  "is_subscribed": false,
+  "is_no_longer_online": false,
+  "categories": ["Team collaboration software", "Design tools"],
+  "category": ["Team collaboration software", "Design tools"],
+  "category_slugs": ["team-collaboration", "design-tools"],
+  "tags": ["vector editing", "prototyping", "design systems"],
+  "scraped_at": "2026-02-14T00:00:00.000Z"
 }
 ```
 
@@ -112,20 +168,29 @@ Scrape developer tools for market analysis:
 
 ## Tips for Best Results
 
-### Choose Active Categories
-- Focus on popular categories with high activity like "productivity", "ai", "saas"
-- Test different categories to find the most relevant products for your research
-- Monitor category performance over time for trend analysis
+### Start With Focused Categories
 
-### Optimize Collection Size
-- Start with smaller batches (20-50 products) for testing and analysis
-- Scale up based on your research needs and data processing capabilities
-- Balance data volume with processing time and platform limits
+- Use specific category slugs for higher relevance
+- Run separate tasks for each category to keep datasets clean
+- Compare results across categories for trend mapping
 
-### Set Realistic Limits
-- Each page typically contains 15 products
-- Adjust `max_pages` based on your `results_wanted` target
-- The actor automatically stops when your target is reached
+### Balance Volume And Runtime
+
+- Start with `20-50` results for testing
+- Increase to `100` when your pipeline is validated
+- Keep `max_pages` as `0` for auto mode unless you want a hard safety cap
+
+### Build Better Segmentation
+
+- Use `categories`, `category_slugs`, and `tags` together
+- Combine rating and review metrics for quality scoring
+- Use `launch_scheduled_at` for time-based trend analysis
+
+### Reliability At Scale
+
+- Enable proxy settings for long or frequent runs
+- Schedule regular runs for consistent monitoring
+- Store results in downstream tools for historical analysis
 
 ---
 
@@ -133,40 +198,41 @@ Scrape developer tools for market analysis:
 
 Connect your data with:
 
-- **Google Sheets** — Export for analysis and reporting
-- **Airtable** — Build searchable product databases
-- **Slack** — Get notifications for new product launches
-- **Make (Integromat)** — Create automated research workflows
-- **Zapier** — Trigger actions based on new products
-- **Webhooks** — Send data to custom endpoints
+- **Google Sheets** — Build shareable product tracking sheets
+- **Airtable** — Create searchable product research databases
+- **BigQuery** — Analyze large product datasets with SQL
+- **Make** — Automate enrichment and alert workflows
+- **Zapier** — Trigger follow-up actions from new records
+- **Webhooks** — Stream output to your internal services
 
 ### Export Formats
 
-Download data in multiple formats:
-
-- **JSON** — For developers and API integrations
-- **CSV** — For spreadsheet analysis and reporting
-- **Excel** — For business intelligence dashboards
-- **XML** — For system integrations and imports
+- **JSON** — Developer workflows and APIs
+- **CSV** — Spreadsheet analysis
+- **Excel** — Business reporting
+- **XML** — Legacy system integrations
 
 ---
 
 ## Frequently Asked Questions
 
-### How many products can I collect?
-You can collect all available products in a category. The practical limit depends on the category size and your plan limits.
+### How many products can I collect per run?
+You can request any positive number using `results_wanted`; the actor keeps paging until target or no new products.
 
-### Can I scrape multiple categories?
-Yes, run separate actor instances for different categories using different category slugs.
+### Can I run multiple categories?
+Yes. Run separate tasks per category slug or custom topic URL for cleaner segmentation.
 
-### What if some data is missing?
-Some fields may be empty if the product doesn't provide that information. The scraper handles missing data gracefully.
+### Why might some fields be empty?
+Some products may not expose all metadata. The actor still returns the rest of the available structured fields.
 
-### How often should I run the scraper?
-Run daily or weekly to capture new product launches. Product Hunt updates frequently with new products across categories.
+### Is pagination automatic?
+Yes. The actor automatically scans additional listing pages until it reaches your target or page limit.
 
-### Can I filter by date or popularity?
-The scraper collects products in the order they appear. Use the output data for filtering and sorting in your analysis tools.
+### Can I use a custom Product Hunt URL?
+Yes. Use `startUrl` to target a specific topic/listing URL directly.
+
+### Is this suitable for scheduled monitoring?
+Yes. The output structure is stable and works well for recurring runs and trend monitoring.
 
 ---
 
@@ -177,11 +243,11 @@ For issues or feature requests, contact support through the Apify Console.
 ### Resources
 
 - [Apify Documentation](https://docs.apify.com/)
-- [API Reference](https://docs.apify.com/api/v2)
+- [Apify API Reference](https://docs.apify.com/api/v2)
 - [Scheduling Runs](https://docs.apify.com/schedules)
 
 ---
 
 ## Legal Notice
 
-This actor is designed for legitimate data collection purposes. Users are responsible for ensuring compliance with Product Hunt's terms of service and applicable laws. Use data responsibly and respect rate limits.
+This actor is intended for legitimate data collection use cases. You are responsible for complying with Product Hunt terms and all applicable laws in your jurisdiction.

@@ -1,193 +1,290 @@
-import { Actor, log } from 'apify';
-import { CheerioCrawler, Dataset } from 'crawlee';
-import * as cheerio from 'cheerio';
+process.env.APIFY_LOG_LEVEL = process.env.APIFY_LOG_LEVEL || 'WARNING';
+process.env.CRAWLEE_LOG_LEVEL = process.env.CRAWLEE_LOG_LEVEL || 'WARNING';
+
+const { Actor } = await import('apify');
+const { default: log } = await import('@apify/log');
+const { CheerioCrawler, Configuration } = await import('crawlee');
 
 await Actor.init();
+log.setLevel(log.LEVELS.WARNING);
+Configuration.set('logLevel', 'WARNING');
 
-/**
- * Extract products from HTML using ProductEdge pattern (DOM parsing)
- */
-function extractProducts(html, crawlerLog) {
+const PRODUCT_OBJECT_PREFIX = '{"__typename":"Product","id":"';
+const PRODUCT_EDGE_PREFIX = '{"__typename":"ProductEdge","node":';
+
+function parseNumeric(value) {
+    if (Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim().length > 0) {
+        const numericValue = Number(value);
+        return Number.isFinite(numericValue) ? numericValue : null;
+    }
+    return null;
+}
+
+function findAllIndexes(text, pattern) {
+    const indexes = [];
+    let fromIndex = 0;
+
+    while (fromIndex < text.length) {
+        const index = text.indexOf(pattern, fromIndex);
+        if (index === -1) break;
+        indexes.push(index);
+        fromIndex = index + pattern.length;
+    }
+
+    return indexes;
+}
+
+function extractJsonObjectAt(text, startIndex) {
+    if (text[startIndex] !== '{') return null;
+
+    let depth = 0;
+    let inString = false;
+    let isEscaped = false;
+
+    for (let i = startIndex; i < text.length; i++) {
+        const char = text[i];
+
+        if (inString) {
+            if (isEscaped) {
+                isEscaped = false;
+                continue;
+            }
+            if (char === '\\') {
+                isEscaped = true;
+                continue;
+            }
+            if (char === '"') {
+                inString = false;
+            }
+            continue;
+        }
+
+        if (char === '"') {
+            inString = true;
+            continue;
+        }
+
+        if (char === '{') {
+            depth++;
+            continue;
+        }
+
+        if (char === '}') {
+            depth--;
+            if (depth === 0) {
+                return text.slice(startIndex, i + 1);
+            }
+        }
+    }
+
+    return null;
+}
+
+function extractProductsFromListingPayload(html, fallbackCategorySlug = null) {
     const productMap = new Map();
-    const $ = cheerio.load(html);
-    
-    // Extract from ProductEdge->node->Product pattern (contains complete data with images)
-    const productEdgeRegex = /\{"__typename":"ProductEdge","node":\{"__typename":"Product","id":"([^"]+)"[\s\S]*?"slug":"([^"]+)","name":"([^"]+)","tagline":"([^"]+)","logoUuid":"([^"]+)"/g;
-    let match;
-    
-    while ((match = productEdgeRegex.exec(html)) !== null) {
-        const [, productId, slug, name, tagline, logoUuid] = match;
-        
-        if (!productMap.has(productId)) {
-            productMap.set(productId, {
-                id: productId,
-                name: name,
-                slug: slug,
-                description: tagline,
-                url: `https://www.producthunt.com/products/${slug}`,
-                image_url: `https://ph-files.imgix.net/${logoUuid}?auto=format&fit=crop`,
-                rating: null,
-                reviews: null,
-                category: [],
-                used_by: [],
-                os: [],
-                scraped_at: new Date().toISOString()
-            });
-        }
-    }
-    
-    // Fallback: Extract standalone Product objects if ProductEdge not found
-    if (productMap.size === 0) {
-        crawlerLog.info('No ProductEdge found, trying fallback extraction...');
-        const productChunks = html.split('{"__typename":"Product"');
-        
-        for (let i = 1; i < productChunks.length && productMap.size < 100; i++) {
-            const chunk = '{"__typename":"Product"' + productChunks[i];
-            const idMatch = chunk.match(/"id":"([^"]+)"/);
-            const nameMatch = chunk.match(/"name":"([^"]+)"/);
-            const slugMatch = chunk.match(/"slug":"([^"]+)"/);
-            const taglineMatch = chunk.match(/"tagline":"([^"]+)"/);
-            const logoMatch = chunk.match(/"logoUuid":"([^"]+)"/);
+    const extractNodesFromPattern = (pattern, usePatternOffset = true) => {
+        const nodes = [];
+        const indexes = findAllIndexes(html, pattern);
 
-            if (nameMatch && taglineMatch && slugMatch && idMatch) {
-                const productId = idMatch[1];
-                if (!productMap.has(productId)) {
-                    const logoUuid = logoMatch ? logoMatch[1] : null;
-                    const imageUrl = logoUuid ? `https://ph-files.imgix.net/${logoUuid}?auto=format&fit=crop` : null;
+        for (const index of indexes) {
+            const startIndex = usePatternOffset ? index + pattern.length : index;
+            if (html[startIndex] !== '{') continue;
 
-                    productMap.set(productId, {
-                        id: productId,
-                        name: nameMatch[1],
-                        slug: slugMatch[1],
-                        description: taglineMatch[1],
-                        url: `https://www.producthunt.com/products/${slugMatch[1]}`,
-                        image_url: imageUrl,
-                        rating: null,
-                        reviews: null,
-                        category: [],
-                        used_by: [],
-                        os: [],
-                        scraped_at: new Date().toISOString()
-                    });
-                }
+            const productJson = extractJsonObjectAt(html, startIndex);
+            if (!productJson) continue;
+
+            try {
+                const productNode = JSON.parse(productJson);
+                if (productNode?.__typename === 'Product') nodes.push(productNode);
+            } catch {
+                continue;
             }
         }
+
+        return nodes;
+    };
+
+    const edgeNodes = extractNodesFromPattern(PRODUCT_EDGE_PREFIX, true);
+    const productNodes = edgeNodes.length > 0
+        ? edgeNodes
+        : extractNodesFromPattern(PRODUCT_OBJECT_PREFIX, false);
+
+    for (const productNode of productNodes) {
+        const id = String(productNode.id ?? '').trim();
+        const slug = String(productNode.slug ?? '').trim();
+        const name = String(productNode.name ?? '').trim();
+
+        if (!id || !slug || !name) continue;
+
+        const url = typeof productNode.url === 'string' && productNode.url.startsWith('http')
+            ? productNode.url
+            : `https://www.producthunt.com/products/${slug}`;
+
+        const categoryObjects = Array.isArray(productNode.categories) ? productNode.categories : [];
+        const categoryFromObjects = categoryObjects.map((categoryItem) => categoryItem?.name);
+        const categoryFromEdges = Array.isArray(productNode.topics?.edges)
+            ? productNode.topics.edges.map((edge) => edge?.node?.name)
+            : [];
+        const categoryFromNodes = Array.isArray(productNode.topics?.nodes)
+            ? productNode.topics.nodes.map((node) => node?.name)
+            : [];
+
+        let categories = Array.from(new Set(
+            [...categoryFromObjects, ...categoryFromEdges, ...categoryFromNodes]
+                .filter((topicName) => typeof topicName === 'string' && topicName.trim().length > 0),
+        ));
+        if (categories.length === 0 && fallbackCategorySlug) {
+            categories = [fallbackCategorySlug];
+        }
+
+        const categorySlugs = Array.from(new Set(
+            categoryObjects
+                .map((categoryItem) => categoryItem?.slug)
+                .filter((categorySlug) => typeof categorySlug === 'string' && categorySlug.trim().length > 0),
+        ));
+        if (categorySlugs.length === 0 && fallbackCategorySlug) {
+            categorySlugs.push(fallbackCategorySlug);
+        }
+
+        const tags = Array.from(new Set(
+            (Array.isArray(productNode.tags) ? productNode.tags : [])
+                .filter((tag) => typeof tag === 'string' && tag.trim().length > 0),
+        ));
+
+        const latestLaunch = productNode.latestLaunch ?? {};
+        const imageUrl = productNode.logoUuid
+            ? `https://ph-files.imgix.net/${productNode.logoUuid}?auto=format&fit=crop`
+            : null;
+
+        const upvotes = parseNumeric(productNode.votesCount) ?? parseNumeric(productNode.followersCount);
+
+        const normalized = {
+            id,
+            slug,
+            name,
+            description: productNode.tagline ?? null,
+            tagline: productNode.tagline ?? null,
+            url,
+            image_url: imageUrl,
+            logo_uuid: productNode.logoUuid ?? null,
+            upvotes,
+            rating: parseNumeric(productNode.reviewsRating),
+            reviews: parseNumeric(productNode.reviewsCount),
+            reviews_count: parseNumeric(productNode.reviewsCount),
+            detailed_reviews_count: parseNumeric(productNode.detailedReviewsCount),
+            founder_reviews_count: parseNumeric(productNode.founderReviewsCount),
+            founder_shoutouts: parseNumeric(productNode.founderShoutouts),
+            followers_count: parseNumeric(productNode.followersCount),
+            posts_count: parseNumeric(productNode.postsCount),
+            launch_post_id: latestLaunch?.id ?? null,
+            launch_scheduled_at: latestLaunch?.scheduledAt ?? null,
+            is_top_product: Boolean(productNode.isTopProduct),
+            is_subscribed: Boolean(productNode.isSubscribed),
+            is_no_longer_online: Boolean(productNode.isNoLongerOnline),
+            categories,
+            category: categories,
+            category_slugs: categorySlugs,
+            tags,
+            scraped_at: new Date().toISOString(),
+        };
+
+        if (!productMap.has(id)) {
+            productMap.set(id, normalized);
+            continue;
+        }
+
+        const existing = productMap.get(id);
+        const mergedCategories = Array.from(new Set([
+            ...(existing.categories ?? []),
+            ...categories,
+        ]));
+
+        productMap.set(id, {
+            ...normalized,
+            ...existing,
+            description: existing.description ?? normalized.description,
+            image_url: existing.image_url ?? normalized.image_url,
+            upvotes: existing.upvotes ?? normalized.upvotes,
+            rating: existing.rating ?? normalized.rating,
+            reviews: existing.reviews ?? normalized.reviews,
+            reviews_count: existing.reviews_count ?? normalized.reviews_count,
+            detailed_reviews_count: existing.detailed_reviews_count ?? normalized.detailed_reviews_count,
+            founder_reviews_count: existing.founder_reviews_count ?? normalized.founder_reviews_count,
+            founder_shoutouts: existing.founder_shoutouts ?? normalized.founder_shoutouts,
+            followers_count: existing.followers_count ?? normalized.followers_count,
+            posts_count: existing.posts_count ?? normalized.posts_count,
+            launch_post_id: existing.launch_post_id ?? normalized.launch_post_id,
+            launch_scheduled_at: existing.launch_scheduled_at ?? normalized.launch_scheduled_at,
+            is_top_product: existing.is_top_product ?? normalized.is_top_product,
+            is_subscribed: existing.is_subscribed ?? normalized.is_subscribed,
+            is_no_longer_online: existing.is_no_longer_online ?? normalized.is_no_longer_online,
+            categories: mergedCategories,
+            category: mergedCategories,
+            category_slugs: Array.from(new Set([
+                ...(existing.category_slugs ?? []),
+                ...(normalized.category_slugs ?? []),
+            ])),
+            tags: Array.from(new Set([
+                ...(existing.tags ?? []),
+                ...(normalized.tags ?? []),
+            ])),
+            scraped_at: normalized.scraped_at,
+        });
     }
-    
-    // Parse DOM for additional fields using Cheerio
-    $('ul li').each((index, element) => {
-        const $item = $(element);
-        
-        // Extract rating - look for numeric rating value only
-        let rating = null;
-        $item.find('span.font-semibold').each((i, span) => {
-            const text = $(span).text().trim();
-            // Check if it's a numeric rating (e.g., "5", "4.5", "4")
-            if (/^\d+(\.\d+)?$/.test(text)) {
-                rating = parseFloat(text);
-                return false; // break the loop
-            }
-        });
-        
-        // Extract review count
-        const reviewLink = $item.find('a.hover\\:underline').first();
-        const reviewText = reviewLink.text().trim();
-        const reviewMatch = reviewText.match(/(\d+)/);
-        const reviews = reviewMatch ? parseInt(reviewMatch[1]) : null;
-        
-        // Extract categories - only from anchor tags to avoid duplicates
-        const categories = [];
-        const categorySet = new Set();
-        $item.find('div.flex.max-h-6.flex-row.flex-wrap.items-center.gap-2.overflow-hidden.z-10.mt-1 a').each((i, cat) => {
-            const catText = $(cat).text().trim();
-            if (catText && !categorySet.has(catText)) {
-                categories.push(catText);
-                categorySet.add(catText);
-            }
-        });
-        
-        // Extract "Used by" information - filter out bullets and duplicates
-        const usedBy = [];
-        const usedBySet = new Set();
-        $item.find('div.flex.grow-0.flex-row.flex-wrap.items-center.gap-2.z-10.mt-1 img').each((i, img) => {
-            const altText = $(img).attr('alt');
-            if (altText && !usedBySet.has(altText) && altText !== '•' && !altText.startsWith('Used by')) {
-                usedBy.push(altText);
-                usedBySet.add(altText);
-            }
-        });
-        
-        // Extract OS/Platform buttons - deduplicate
-        const osList = [];
-        const osSet = new Set();
-        $item.find('div.mt-2.flex.flex-wrap.gap-1.z-10 button, button.mt-2').each((i, os) => {
-            const osText = $(os).text().trim();
-            if (osText && !osSet.has(osText)) {
-                osList.push(osText);
-                osSet.add(osText);
-            }
-        });
-        
-        // Try to match this item to a product by name or slug
-        const productName = $item.find('h3, [class*="font-bold"], strong').first().text().trim();
-        const productLink = $item.find('a[href*="/products/"]').first().attr('href');
-        
-        if (productLink) {
-            const slugMatch = productLink.match(/\/products\/([^/?]+)/);
-            if (slugMatch) {
-                const slug = slugMatch[1];
-                
-                // Find matching product in map
-                for (const [id, product] of productMap.entries()) {
-                    if (product.slug === slug || product.name === productName) {
-                        // Update product with DOM-parsed data
-                        if (rating !== null) product.rating = rating;
-                        if (reviews) product.reviews = reviews;
-                        if (categories.length > 0) product.category = categories;
-                        if (usedBy.length > 0) product.used_by = usedBy;
-                        if (osList.length > 0) product.os = osList;
-                        break;
-                    }
-                }
-            }
-        }
-    });
-    
-    const products = Array.from(productMap.values());
-    crawlerLog.info(`Extracted ${products.length} unique products`);
-    return products;
+
+    return Array.from(productMap.values());
+}
+
+function buildPageUrl(baseUrl, page) {
+    try {
+        const parsed = new URL(baseUrl);
+        parsed.searchParams.set('page', String(page));
+        return parsed.toString();
+    } catch {
+        const separator = baseUrl.includes('?') ? '&' : '?';
+        return `${baseUrl}${separator}page=${page}`;
+    }
 }
 
 async function main() {
     try {
-        log.info('Product Hunt Scraper - Production Ready');
-
         const input = await Actor.getInput() || {};
         const {
             startUrl,
             category = 'productivity',
             results_wanted = 20,
-            max_pages = 3,
-            proxyConfiguration
+            max_pages = 0,
+            proxyConfiguration,
         } = input;
 
-        const resultsWanted = Math.max(1, Math.min(100, Number(results_wanted)));
-        const maxPages = Math.max(1, Math.min(10, Number(max_pages)));
-        
-        // Use startUrl if provided, otherwise build from category
+        const requestedResults = Number(results_wanted);
+        const resultsWanted = Number.isFinite(requestedResults) && requestedResults > 0
+            ? Math.floor(requestedResults)
+            : 20;
+        const requestedMaxPages = Number(max_pages);
+        const maxPages = Number.isFinite(requestedMaxPages) && requestedMaxPages > 0
+            ? Math.floor(requestedMaxPages)
+            : 0;
         const baseUrl = startUrl || `https://www.producthunt.com/topics/${category}`;
-        
-        log.info(`Source: ${startUrl ? 'Custom URL' : 'Category'}`);
-        log.info(`URL: ${baseUrl}`);
-        log.info(`Target: ${resultsWanted} products from ${maxPages} page(s)`);
 
-        let totalSaved = 0;
-        const allProducts = [];
+        log.warning(
+            `Start run | target=${resultsWanted} | url=${baseUrl} | ` +
+            `max_pages=${maxPages === 0 ? 'auto' : maxPages}`,
+        );
+
+        const productsById = new Map();
+        let pagesProcessed = 0;
+        let stopReason = 'finished';
 
         const crawler = new CheerioCrawler({
-            maxRequestRetries: 3,
-            maxConcurrency: 2,
+            maxRequestRetries: 2,
+            maxConcurrency: 3,
             requestHandlerTimeoutSecs: 60,
+            statusMessageLoggingInterval: 1_000_000,
+            statisticsOptions: {
+                logIntervalSecs: 1_000_000,
+            },
             useSessionPool: true,
             sessionPoolOptions: {
                 maxPoolSize: 10,
@@ -196,12 +293,10 @@ async function main() {
                 },
             },
             proxyConfiguration: proxyConfiguration ? await Actor.createProxyConfiguration(proxyConfiguration) : undefined,
-            
             preNavigationHooks: [
                 async ({ request }) => {
-                    // Stealth headers
                     request.headers = {
-                        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                         'accept-language': 'en-US,en;q=0.9',
                         'accept-encoding': 'gzip, deflate, br',
                         'cache-control': 'max-age=0',
@@ -213,75 +308,78 @@ async function main() {
                         'sec-fetch-site': 'none',
                         'sec-fetch-user': '?1',
                         'upgrade-insecure-requests': '1',
-                        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                     };
-                    
-                    // Random delay (stealth)
-                    await new Promise(r => setTimeout(r, 1000 + Math.random() * 2000));
-                }
+
+                    await new Promise((resolve) => setTimeout(resolve, 20 + Math.random() * 40));
+                },
             ],
-            
-            async requestHandler({ request, body, log: crawlerLog, crawler }) {
-                crawlerLog.info(`Processing: ${request.url}`);
-                
+            async requestHandler({ request, body, crawler: activeCrawler }) {
+                pagesProcessed++;
+
                 if (!body || body.length < 1000) {
-                    throw new Error('Page content too short - possible block');
+                    throw new Error('Page content too short - possible blocking or challenge page');
                 }
-                
-                const products = extractProducts(body, crawlerLog);
-                
+
+                const topicSlugMatch = request.url.match(/\/topics\/([^/?#]+)/i);
+                const fallbackCategorySlug = topicSlugMatch ? topicSlugMatch[1] : null;
+                const products = extractProductsFromListingPayload(body, fallbackCategorySlug);
+
                 if (products.length === 0) {
-                    crawlerLog.warning('No products found on this page');
+                    stopReason = 'no_products_on_page';
+                    await activeCrawler.autoscaledPool?.abort();
                     return;
                 }
-                
-                allProducts.push(...products);
-                crawlerLog.info(`Total products collected: ${allProducts.length}`);
-                
-                // Stop if we have enough products
-                if (allProducts.length >= resultsWanted) {
-                    crawlerLog.info(`Reached target, stopping crawler`);
-                    await crawler.autoscaledPool?.abort();
+
+                let newUniqueProducts = 0;
+                for (const product of products) {
+                    if (!productsById.has(product.id)) {
+                        productsById.set(product.id, product);
+                        newUniqueProducts++;
+                    }
+                }
+
+                if (productsById.size >= resultsWanted) {
+                    stopReason = 'target_reached';
+                    await activeCrawler.autoscaledPool?.abort();
                     return;
                 }
-                
-                // Get current page number
-                const currentPage = request.userData.page || 1;
-                
-                // Add next page if we haven't reached max pages
-                if (currentPage < maxPages && allProducts.length < resultsWanted) {
-                    const nextPage = currentPage + 1;
-                    const nextUrl = `${baseUrl}?page=${nextPage}`;
-                    
-                    await crawler.addRequests([{
-                        url: nextUrl,
-                        userData: { page: nextPage }
-                    }]);
-                    
-                    crawlerLog.info(`Added page ${nextPage} to queue`);
+
+                if (newUniqueProducts === 0) {
+                    stopReason = 'no_new_products';
+                    await activeCrawler.autoscaledPool?.abort();
+                    return;
                 }
+
+                const currentPage = Number(request.userData.page || 1);
+                if (maxPages > 0 && currentPage >= maxPages) {
+                    stopReason = 'max_pages_reached';
+                    await activeCrawler.autoscaledPool?.abort();
+                    return;
+                }
+
+                const nextPage = currentPage + 1;
+                const nextUrl = buildPageUrl(baseUrl, nextPage);
+                await activeCrawler.addRequests([{ url: nextUrl, userData: { page: nextPage } }]);
             },
-            
             failedRequestHandler({ request }, error) {
-                log.error(`Failed: ${request.url} - ${error.message}`);
+                log.error(`Request failed: ${request.url} - ${error.message}`);
             },
         });
 
-        await crawler.run([{ url: baseUrl, userData: { page: 1 } }]);
-        
-        // Deduplicate and limit
-        const uniqueProducts = Array.from(
-            new Map(allProducts.map(p => [p.id, p])).values()
-        ).slice(0, resultsWanted);
-        
+        await crawler.run([{ url: buildPageUrl(baseUrl, 1), userData: { page: 1 } }]);
+
+        const uniqueProducts = Array.from(productsById.values()).slice(0, resultsWanted);
+
         if (uniqueProducts.length > 0) {
-            await Dataset.pushData(uniqueProducts);
-            totalSaved = uniqueProducts.length;
-            log.info(`✅ Saved ${totalSaved} products to dataset`);
+            await Actor.pushData(uniqueProducts);
+            log.warning(
+                `Done | pushed=${uniqueProducts.length} | pages=${pagesProcessed} | stop_reason=${stopReason}`,
+            );
         } else {
-            log.warning('⚠️ No products extracted');
+            log.warning(`Done | pushed=0 | pages=${pagesProcessed} | stop_reason=${stopReason}`);
         }
-        
+
         await Actor.exit();
     } catch (error) {
         log.error(`Fatal error: ${error.message}`);

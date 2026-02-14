@@ -1,6 +1,6 @@
 {
-  "title": "Product Hunt Scraper - Production Ready",
-  "description": "Fast, reliable Product Hunt scraper. Extract product names, descriptions, images from any category with automatic pagination.",
+  "title": "Product Hunt Products Scraper",
+  "description": "Fast Product Hunt product data collection by category. Extract rich metrics, categories, tags, and launch details with automatic pagination.",
   "type": "object",
   "schemaVersion": 1,
   "properties": {
@@ -22,21 +22,19 @@
     "results_wanted": {
       "title": "Maximum Products",
       "type": "integer",
-      "description": "Maximum number of products to scrape (1-100)",
+      "description": "Maximum number of products to scrape (1+). Actor continues until this target is met or no more products are found.",
       "minimum": 1,
-      "maximum": 100,
       "default": 20,
       "prefill": 20,
       "editor": "number"
     },
     "max_pages": {
-      "title": "Maximum Pages",
+      "title": "Maximum Pages (Optional Safety Cap)",
       "type": "integer",
-      "description": "Maximum number of pages to scrape (1-10). Each page contains ~15 products.",
-      "minimum": 1,
-      "maximum": 10,
-      "default": 3,
-      "prefill": 3,
+      "description": "Optional safety cap. Set to 0 for automatic pagination until results_wanted is reached or products end.",
+      "minimum": 0,
+      "default": 0,
+      "prefill": 0,
       "editor": "number"
     },
     "proxyConfiguration": {

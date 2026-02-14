@@ -9,7 +9,7 @@
   "output": "./output_schema.json",
   "nodeJsVersion": "22",
   "meta": {
-    "generatedBy": "claude-sonnet-4.5"
+    "generatedBy": "gpt-5-codex"
   },
   "storages": {
     "dataset": "./dataset_schema.json"
